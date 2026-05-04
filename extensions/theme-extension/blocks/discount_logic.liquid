@@ -1,0 +1,17 @@
+
+<script>
+  window.discountEngine = {
+    discounts: {{ shop.metafields.discount_engine.all_discounts.value | default: '[]' }},
+    shop: "{{ shop.permanent_domain }}"
+  };
+</script>
+
+<script src="{{ 'discount-logic.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Discount Engine Logic",
+  "target": "head",
+  "settings": []
+}
+{% endschema %}

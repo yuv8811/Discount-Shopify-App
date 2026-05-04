@@ -1,0 +1,31 @@
+query CartInput {
+  cart {
+    lines {
+      id
+      quantity
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+          product {
+            id
+          }
+        }
+      }
+      cost {
+        subtotalAmount {
+          amount
+        }
+      }
+    }
+  }
+  discount {
+    discountClasses
+  }
+  shop {
+    metafield(namespace: "discount_engine", key: "all_discounts") {
+      value
+    }
+  }
+}
+
