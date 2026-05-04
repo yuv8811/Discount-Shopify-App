@@ -37,6 +37,26 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const idToDelete = formData.get("id");
   const shopId = formData.get("shopId");
+  const wipeAll = formData.get("wipeAll") === "true";
+
+  if (wipeAll) {
+    await admin.graphql(`
+      mutation {
+        metafieldsSet(metafields: [
+          {
+            ownerId: "${shopId}",
+            namespace: "discount_engine",
+            key: "all_discounts",
+            type: "json",
+            value: "[]"
+          }
+        ]) {
+          userErrors { message }
+        }
+      }
+    `);
+    return { success: true };
+  }
 
   // 1. Fetch current discounts
   const response = await admin.graphql(`
@@ -55,11 +75,28 @@ export const action = async ({ request }) => {
     if (rawValue) currentDiscounts = JSON.parse(rawValue);
   } catch (e) { }
 
-  // 2. Filter out the one to delete
+  // 2. Find the discount to delete and filter out
+  const discountToDelete = currentDiscounts.find(d => d.id === idToDelete);
   const updatedDiscounts = currentDiscounts.filter(d => d.id !== idToDelete);
 
+  // 3. Delete from Shopify if shopifyId exists
+  if (discountToDelete?.shopifyId) {
+    console.log("Deleting from Shopify:", discountToDelete.shopifyId);
+    await admin.graphql(`
+      mutation {
+        discountAutomaticDelete(id: "${discountToDelete.shopifyId}") {
+          deletedAutomaticDiscountId
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `);
+  }
+
   // 3. Save back
-  await admin.graphql(`
+  const setResp = await admin.graphql(`
     mutation {
       metafieldsSet(metafields: [
         {
@@ -70,10 +107,17 @@ export const action = async ({ request }) => {
           value: ${JSON.stringify(JSON.stringify(updatedDiscounts))}
         }
       ]) {
-        userErrors { message }
+        userErrors { message field }
       }
     }
   `);
+
+  const setResult = await setResp.json();
+  console.log("Delete Metafield Set Result:", JSON.stringify(setResult));
+
+  if (setResult.data?.metafieldsSet?.userErrors?.length > 0) {
+    return { success: false, errors: setResult.data.metafieldsSet.userErrors };
+  }
 
   return { success: true };
 };
@@ -87,6 +131,15 @@ export default function Index() {
     if (confirm("Are you sure you want to delete this discount?")) {
       const formData = new FormData();
       formData.append("id", id);
+      formData.append("shopId", shopId);
+      submit(formData, { method: "POST" });
+    }
+  };
+
+  const handleWipeAll = () => {
+    if (confirm("Are you sure you want to WIPE ALL discounts from the registry? This cannot be undone.")) {
+      const formData = new FormData();
+      formData.append("wipeAll", "true");
       formData.append("shopId", shopId);
       submit(formData, { method: "POST" });
     }
@@ -182,9 +235,7 @@ export default function Index() {
                 </s-text>
               </s-box>
               <s-box padding="loose">
-                <s-button variant="primary" size="large" onClick={() => document.querySelector('s-modal')?.show()}>
-                  Create your first discount
-                </s-button>
+                <Modal />
               </s-box>
             </s-stack>
           </>
@@ -203,6 +254,9 @@ export default function Index() {
                 {selectedIndices.length > 0 && (
                   <s-icon type="delete" tone="critical" />
                 )}
+                <s-button variant="tertiary" tone="critical" onClick={handleWipeAll}>
+                  Wipe All Registry
+                </s-button>
               </s-stack>
             </s-box>
 

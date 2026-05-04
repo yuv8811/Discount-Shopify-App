@@ -13,7 +13,7 @@ export const loader = async ({ request }) => {
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
-  
+
   const title = formData.get("title");
   const message = formData.get("message");
   const buyQty = formData.get("buyQty");
@@ -23,7 +23,7 @@ export const action = async ({ request }) => {
   const buyProducts = JSON.parse(formData.get("buyProducts") || "[]");
 
   console.log("Saving discount:", { title, message, buyQty, getQty, discountType, discountValue });
-  
+
   const response = await admin.graphql(`
     query {
       shop {
@@ -34,7 +34,7 @@ export const action = async ({ request }) => {
       }
     }
   `);
-  
+
   const result = await response.json();
   const shopId = result.data.shop.id;
   console.log("Shop ID:", shopId);
@@ -130,10 +130,12 @@ export const action = async ({ request }) => {
 
     const discResult = await discResp.json();
     console.log("Native Discount Creation Result:", JSON.stringify(discResult));
-    
+
     if (discResult.data?.discountAutomaticAppCreate?.userErrors?.length > 0) {
       nativeErrors = discResult.data.discountAutomaticAppCreate.userErrors;
       console.error("Shopify User Errors:", nativeErrors);
+    } else {
+      newDiscount.shopifyId = discResult.data?.discountAutomaticAppCreate?.automaticAppDiscount?.discountId;
     }
   } else {
     nativeErrors = [{ message: "No Shopify Function found. Make sure you have deployed your extension.", field: ["functionId"] }];
@@ -141,57 +143,54 @@ export const action = async ({ request }) => {
 
 
 
-  // 3. Ensure the SHOP Metafield Definition exists
-  const defResp = await admin.graphql(`
-    mutation {
-      metafieldDefinitionCreate(definition: {
-        name: "All Discounts"
-        namespace: "discount_engine"
-        key: "all_discounts"
-        type: "json"
-        ownerType: SHOP
-        access: {
-          storefront: "public_read"
+  // 4. Save to SHOP Metafield ONLY if Shopify creation succeeded
+  if (nativeErrors.length === 0) {
+    // Ensure the SHOP Metafield Definition exists
+    await admin.graphql(`
+      mutation {
+        metafieldDefinitionCreate(definition: {
+          name: "All Discounts"
+          namespace: "discount_engine"
+          key: "all_discounts"
+          type: "json"
+          ownerType: SHOP
+          access: {
+            storefront: PUBLIC_READ
+          }
+        }) {
+          userErrors { message }
         }
-      }) {
-        userErrors { message }
       }
-    }
-  `);
+    `);
 
-  const defResult = await defResp.json();
-  console.log("Definition Create Result:", JSON.stringify(defResult));
+    const updatedDiscounts = [...currentDiscounts, newDiscount];
 
-  // 4. Fetch existing discounts and append
-  const updatedDiscounts = [...currentDiscounts, newDiscount];
-
-  // 5. Save to SHOP Metafield
-  const setResp = await admin.graphql(`
-    mutation {
-      metafieldsSet(metafields: [
-        {
-          ownerId: "${shopId}",
-          namespace: "discount_engine",
-          key: "all_discounts",
-          type: "json",
-          value: ${JSON.stringify(JSON.stringify(updatedDiscounts))}
+    const setResp = await admin.graphql(`
+      mutation {
+        metafieldsSet(metafields: [
+          {
+            ownerId: "${shopId}",
+            namespace: "discount_engine",
+            key: "all_discounts",
+            type: "json",
+            value: ${JSON.stringify(JSON.stringify(updatedDiscounts))}
+          }
+        ]) {
+          userErrors { message }
         }
-      ]) {
-        userErrors { message }
       }
-    }
-  `);
-  const setResult = await setResp.json();
-  console.log("Metafield Set Result:", JSON.stringify(setResult));
+    `);
+    const setResult = await setResp.json();
+    console.log("Metafield Set Result:", JSON.stringify(setResult));
 
-  if (nativeErrors.length > 0) {
-    return { 
-      success: true, 
-      nativeDiscountError: nativeErrors 
-    };
+    return redirect("/app");
   }
 
-  return redirect("/app");
+  // If there were errors, don't save to registry and return errors to UI
+  return {
+    success: false,
+    nativeDiscountError: nativeErrors
+  };
 };
 
 
@@ -211,23 +210,23 @@ export default function DiscountCreate() {
   }
 
   return (
-    <s-page 
-      narrowWidth 
+    <s-page
+      narrowWidth
       backAction={{ content: "Discounts", url: "/app" }}
       title={`Create ${type.toUpperCase()} Discount`}
     >
       <s-stack gap="base">
         {actionData?.nativeDiscountError && (
-          <s-banner tone="critical" title="Native Discount Creation Failed">
+          <s-banner tone="critical" title="Discount Creation Failed">
             <s-list>
               {actionData.nativeDiscountError.map((err, i) => (
-                <s-list-item key={i}>{err.message} (Field: {err.field?.join(", ")})</s-list-item>
+                <s-list-item key={i}>{err.message} {err.field ? `(Field: ${err.field.join(", ")})` : ""}</s-list-item>
               ))}
             </s-list>
-            <s-text>The data was saved to your app's registry, but Shopify couldn't create the official discount logic.</s-text>
+            <s-text>Please fix the errors above. The discount has not been saved to the registry.</s-text>
           </s-banner>
         )}
-        
+
         {actionData?.success && !actionData?.nativeDiscountError && (
           <s-banner tone="success" title="Discount Saved Successfully">
             <s-text>Your discount is now active and visible in the Shopify Discounts page.</s-text>
@@ -246,4 +245,4 @@ export default function DiscountCreate() {
 
 export const headers = (headersArgs) => {
   return boundary.headers(headersArgs);
-};
+};

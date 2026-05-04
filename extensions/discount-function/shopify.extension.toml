@@ -20,3 +20,9 @@ description = "t:description"
   [extensions.build]
   command = ""
   path = "dist/function.wasm"
+
+[[extensions.metafields.read]]
+namespace = "discount_engine"
+key = "all_discounts"
+owner_type = "shop"
+
