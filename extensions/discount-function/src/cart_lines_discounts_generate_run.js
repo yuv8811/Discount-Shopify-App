@@ -1,5 +1,4 @@
 import {
-  DiscountClass,
   ProductDiscountSelectionStrategy,
 } from '../generated/api';
 
@@ -26,47 +25,55 @@ export function cartLinesDiscountsGenerateRun(input) {
     return { operations: [] };
   }
 
-  const operations = [];
+  const allCandidates = [];
 
   for (const discount of discounts) {
-    // Only process BOGO for now
-    const buyQty = parseInt(discount.buyQty);
-    const getQty = parseInt(discount.getQty);
-    const targetProductIds = discount.products;
+    if (discount.status !== 'active') continue;
 
-    // Find cart lines that match the target products
-    const matchingLines = input.cart.lines.filter(line => {
+    const buyQty = parseInt(discount.buyQty) || 1;
+    const getQty = parseInt(discount.getQty) || 1;
+    
+    const buyProductIds = (discount.buyProducts || discount.products || []).map(p => typeof p === 'string' ? p : p.id);
+    const getProductIds = (discount.getProducts || []).map(p => typeof p === 'string' ? p : p.id);
+
+    const buyMatchingLines = input.cart.lines.filter(line => {
       const productId = line.merchandise.product?.id;
-      return targetProductIds.includes(productId);
+      return buyProductIds.includes(productId);
     });
 
-    const totalMatchingQty = matchingLines.reduce((sum, line) => sum + line.quantity, 0);
+    const totalBuyQty = buyMatchingLines.reduce((sum, line) => sum + line.quantity, 0);
 
-    // If we have enough items to trigger the discount
-    if (totalMatchingQty >= buyQty) {
-      // Calculate how many free items are earned
-      const timesApplied = Math.floor(totalMatchingQty / buyQty);
-      const earnedRewardQty = timesApplied * getQty;
+    if (totalBuyQty >= buyQty) {
+      const getMatchingLines = input.cart.lines.filter(line => {
+        const productId = line.merchandise.product?.id;
+        if (getProductIds.length === 0) return buyProductIds.includes(productId);
+        return getProductIds.includes(productId);
+      });
 
-      // Apply to the first matching line for simplicity, or spread it
-      if (matchingLines.length > 0) {
-        operations.push({
-          productDiscountsAdd: {
-            candidates: [
-              {
-                message: discount.message || "BOGO Offer Applied",
-                targets: matchingLines.map(line => ({ cartLine: { id: line.id } })),
-                value: discount.discountType === "free" 
-                  ? { percentage: { value: 100 } } 
-                  : { percentage: { value: parseFloat(discount.discountValue) } }
-              },
-            ],
-            selectionStrategy: ProductDiscountSelectionStrategy.First,
-          },
+      if (getMatchingLines.length > 0) {
+        allCandidates.push({
+          message: discount.message || "BOGO Offer Applied",
+          targets: getMatchingLines.map(line => ({ cartLine: { id: line.id } })),
+          value: discount.discountType === "free" || !discount.discountType
+            ? { percentage: { value: 100 } } 
+            : { percentage: { value: parseFloat(discount.discountValue) || 100 } }
         });
       }
     }
   }
 
-  return { operations };
-}
+  if (allCandidates.length === 0) {
+    return { operations: [] };
+  }
+
+  return {
+    operations: [
+      {
+        productDiscountsAdd: {
+          candidates: allCandidates,
+          selectionStrategy: ProductDiscountSelectionStrategy.First,
+        },
+      },
+    ],
+  };
+}

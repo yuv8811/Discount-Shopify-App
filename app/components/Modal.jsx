@@ -1,50 +1,69 @@
+import { useState, useCallback } from "react";
 import { useNavigate } from "react-router";
+import {
+  Button,
+  Modal,
+  ResourceList,
+  ResourceItem,
+  Text,
+  BlockStack,
+} from "@shopify/polaris";
 import All_Discounts from "../config/All_Discounts";
 
-export default function Modal(props) {
+export default function DiscountSelectorModal() {
   const navigate = useNavigate();
-    return (
-        <>
-            <s-button {...props} commandFor="discount-selector-modal" command="--show" variant="primary">
-                Create discount
-            </s-button>
+  const [active, setActive] = useState(false);
 
-            <s-modal id="discount-selector-modal" heading="Create Product Discounts" size="large">
-                <s-box padding="none">
-                    <s-stack gap="none">
-                        {All_Discounts.map((discount, index) => (
-                            <s-box
-                                key={index}
-                                padding="base"
-                                borderBottomWidth={index === All_Discounts.length - 1 ? "none" : "base"}
-                                style={{ background: "white" }}
-                            >
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: "16px" }}>
-                                    <s-stack gap="extraTight" style={{ flex: 1 }}>
-                                        <s-text variant="bodyMd" fontWeight="bold">
-                                            {discount.title}
-                                        </s-text>
-                                        <s-text variant="bodySm" tone="subdued">
-                                            {discount.subtitle}
-                                        </s-text>
-                                    </s-stack>
+  const handleChange = useCallback(() => setActive(!active), [active]);
 
-                                    <s-button onClick={() => {
-                                        const type = discount.title.split(" ")[0]; // Get the first word as type for simplicity, or map it
-                                        // Better: use the path and format it
-                                        const formattedType = discount.title.includes("BOGO") ? "Bogo" : discount.title.split(" ")[0];
-                                        navigate(`/app/discount/new?type=${formattedType}`);
-                                    }}>
-                                        Create
-                                    </s-button>
-                                </div>
-                            </s-box>
-                        ))}
-                    </s-stack>
-                </s-box>
-            </s-modal>
-        </>
-    );
+  const activator = (
+    <Button onClick={handleChange} variant="primary">
+      Create discount
+    </Button>
+  );
+
+  return (
+    <>
+      {activator}
+      <Modal
+        open={active}
+        onClose={handleChange}
+        title="Create Product Discounts"
+        size="large"
+      >
+        <Modal.Section padding="0">
+          <ResourceList
+            resourceName={{ singular: "discount", plural: "discounts" }}
+            items={All_Discounts}
+            renderItem={(discount) => {
+              const { title, subtitle } = discount;
+              return (
+                <ResourceItem
+                  id={title}
+                  onClick={() => {
+                    const formattedType = title.includes("BOGO")
+                      ? "Bogo"
+                      : title.split(" ")[0];
+                    navigate(`/app/discount/new?type=${formattedType}`);
+                  }}
+                  accessibilityLabel={`Create ${title}`}
+                >
+                  <BlockStack gap="100">
+                    <Text variant="bodyMd" fontWeight="bold" as="h3">
+                      {title}
+                    </Text>
+                    <Text variant="bodySm" tone="subdued">
+                      {subtitle}
+                    </Text>
+                  </BlockStack>
+                </ResourceItem>
+              );
+            }}
+          />
+        </Modal.Section>
+      </Modal>
+    </>
+  );
 }
 
 

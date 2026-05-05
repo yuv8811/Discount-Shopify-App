@@ -3,20 +3,20 @@ import { useLoaderData, useSubmit } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import Modal from "../components/Modal";
+import EditModal from "../components/EditModal"
+import {
+  SHOP_QUERY,
+  METAFIELDS_SET_MUTATION,
+  DELETE_AUTOMATIC_DISCOUNT_MUTATION,
+  UPDATE_AUTOMATIC_DISCOUNT_MUTATION,
+  ACTIVATE_DISCOUNT_MUTATION,
+  DEACTIVATE_DISCOUNT_MUTATION,
+} from "../graphql";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
 
-  const response = await admin.graphql(`
-    query {
-      shop {
-        id
-        metafield(namespace: "discount_engine", key: "all_discounts") {
-          value
-        }
-      }
-    }
-  `);
+  const response = await admin.graphql(SHOP_QUERY);
 
   const result = await response.json();
   let discounts = [];
@@ -35,86 +35,87 @@ export const loader = async ({ request }) => {
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
-  const idToDelete = formData.get("id");
+  const intent = formData.get("intent");
+  const id = formData.get("id");
   const shopId = formData.get("shopId");
-  const wipeAll = formData.get("wipeAll") === "true";
 
-  if (wipeAll) {
-    await admin.graphql(`
-      mutation {
-        metafieldsSet(metafields: [
-          {
-            ownerId: "${shopId}",
-            namespace: "discount_engine",
-            key: "all_discounts",
-            type: "json",
-            value: "[]"
-          }
-        ]) {
-          userErrors { message }
-        }
-      }
-    `);
-    return { success: true };
-  }
-
-  // 1. Fetch current discounts
-  const response = await admin.graphql(`
-    query {
-      shop {
-        metafield(namespace: "discount_engine", key: "all_discounts") {
-          value
-        }
-      }
-    }
-  `);
+  // Fetch current discounts
+  const response = await admin.graphql(SHOP_QUERY);
   const result = await response.json();
   let currentDiscounts = [];
   try {
     const rawValue = result.data.shop.metafield?.value;
     if (rawValue) currentDiscounts = JSON.parse(rawValue);
-  } catch (e) { }
+  } catch (e) {}
 
-  // 2. Find the discount to delete and filter out
-  const discountToDelete = currentDiscounts.find(d => d.id === idToDelete);
-  const updatedDiscounts = currentDiscounts.filter(d => d.id !== idToDelete);
+  let updatedDiscounts = [...currentDiscounts];
 
-  // 3. Delete from Shopify if shopifyId exists
-  if (discountToDelete?.shopifyId) {
-    console.log("Deleting from Shopify:", discountToDelete.shopifyId);
-    await admin.graphql(`
-      mutation {
-        discountAutomaticDelete(id: "${discountToDelete.shopifyId}") {
-          deletedAutomaticDiscountId
-          userErrors {
-            field
-            message
-          }
-        }
+  if (intent === "delete") {
+    const idsToDelete = formData.getAll("id");
+    
+    // Process each ID
+    for (const idToDelete of idsToDelete) {
+      const discount = currentDiscounts.find((d) => d.id === idToDelete);
+      if (discount?.shopifyId) {
+        await admin.graphql(
+          DELETE_AUTOMATIC_DISCOUNT_MUTATION(discount.shopifyId)
+        );
       }
-    `);
+    }
+
+    updatedDiscounts = currentDiscounts.filter(
+      (d) => !idsToDelete.includes(d.id)
+    );
+  } else if (intent === "update") {
+    const title = formData.get("title");
+    const message = formData.get("message");
+    const status = formData.get("status");
+    const buyQty = formData.get("buyQty");
+    const getQty = formData.get("getQty");
+    const buyProducts = JSON.parse(formData.get("buyProducts") || "[]");
+    const getProducts = JSON.parse(formData.get("getProducts") || "[]");
+
+    const discountToUpdate = currentDiscounts.find((d) => d.id === id);
+
+    if (discountToUpdate?.shopifyId) {
+      // 1. Update basic info (title)
+      await admin.graphql(
+        UPDATE_AUTOMATIC_DISCOUNT_MUTATION(discountToUpdate.shopifyId, title)
+      );
+
+      // 2. Handle status change (Activate/Deactivate)
+      if (status === "active") {
+        await admin.graphql(ACTIVATE_DISCOUNT_MUTATION(discountToUpdate.shopifyId));
+      } else {
+        // Deactivate the discount in Shopify for any non-active status
+        await admin.graphql(DEACTIVATE_DISCOUNT_MUTATION(discountToUpdate.shopifyId));
+      }
+    }
+
+    updatedDiscounts = currentDiscounts.map((d) => {
+      if (d.id === id) {
+        return { ...d, title, message, status, buyQty, getQty, buyProducts, getProducts };
+      }
+      return d;
+    });
   }
 
-  // 3. Save back
-  const setResp = await admin.graphql(`
-    mutation {
-      metafieldsSet(metafields: [
+  // Save back to Shopify
+  const setResp = await admin.graphql(METAFIELDS_SET_MUTATION, {
+    variables: {
+      metafields: [
         {
-          ownerId: "${shopId}",
+          ownerId: shopId,
           namespace: "discount_engine",
           key: "all_discounts",
           type: "json",
-          value: ${JSON.stringify(JSON.stringify(updatedDiscounts))}
-        }
-      ]) {
-        userErrors { message field }
-      }
-    }
-  `);
+          value: JSON.stringify(updatedDiscounts),
+        },
+      ],
+    },
+  });
 
   const setResult = await setResp.json();
-  console.log("Delete Metafield Set Result:", JSON.stringify(setResult));
-
   if (setResult.data?.metafieldsSet?.userErrors?.length > 0) {
     return { success: false, errors: setResult.data.metafieldsSet.userErrors };
   }
@@ -132,18 +133,25 @@ export default function Index() {
       const formData = new FormData();
       formData.append("id", id);
       formData.append("shopId", shopId);
+      formData.append("intent", "delete");
       submit(formData, { method: "POST" });
     }
   };
 
-  const handleWipeAll = () => {
-    if (confirm("Are you sure you want to WIPE ALL discounts from the registry? This cannot be undone.")) {
+  const handleBulkDelete = () => {
+    const count = selectedIndices.length;
+    if (confirm(`Are you sure you want to delete ${count} selected discounts?`)) {
       const formData = new FormData();
-      formData.append("wipeAll", "true");
+      selectedIndices.forEach((index) => {
+        formData.append("id", discounts[index].id);
+      });
       formData.append("shopId", shopId);
+      formData.append("intent", "delete");
       submit(formData, { method: "POST" });
+      setSelectedIndices([]);
     }
   };
+
 
   const handleSelectAll = (e) => {
     if (e.target.checked) {
@@ -195,7 +203,7 @@ export default function Index() {
                 Inactive Discounts
               </s-text>
               <s-text variant="headingLg">
-                {discounts.filter(d => d.status === 'inactive' || d.status === 'draft').length}
+                {discounts.filter(d => d.status === 'inactive').length}
               </s-text>
             </s-stack>
           </s-box>
@@ -252,11 +260,10 @@ export default function Index() {
                   )}
                 </div>
                 {selectedIndices.length > 0 && (
-                  <s-icon type="delete" tone="critical" />
+                  <s-button variant="tertiary" tone="critical" onClick={handleBulkDelete}>
+                    <s-icon type="delete" />
+                  </s-button>
                 )}
-                <s-button variant="tertiary" tone="critical" onClick={handleWipeAll}>
-                  Wipe All Registry
-                </s-button>
               </s-stack>
             </s-box>
 
@@ -292,15 +299,13 @@ export default function Index() {
                       </s-table-cell>
                       <s-table-cell>{type}</s-table-cell>
                       <s-table-cell>
-                        <s-badge tone={status === "active" ? "success" : status === "inactive" ? "critical" : "warning"}>
+                        <s-badge tone={status === "active" ? "success" : "critical"}>
                           {status}
                         </s-badge>
                       </s-table-cell>
                       <s-table-cell>
                         <s-stack direction="inline" gap="extraTight">
-                          <s-button variant="tertiary" size="small">
-                            <s-icon type="edit" />
-                          </s-button>
+                          <EditModal discount={discount} />
                           <s-button
                             variant="tertiary"
                             tone="critical"

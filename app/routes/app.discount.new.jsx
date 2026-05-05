@@ -2,6 +2,13 @@ import { useLoaderData, useActionData, redirect } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import BogoForm from "../components/DiscountForms/BogoForm";
+import {
+  SHOP_QUERY,
+  FUNCTIONS_QUERY,
+  CREATE_AUTOMATIC_DISCOUNT_MUTATION,
+  METAFIELD_DEFINITION_CREATE_MUTATION,
+  METAFIELDS_SET_MUTATION
+} from "../graphql";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -21,19 +28,11 @@ export const action = async ({ request }) => {
   const discountType = formData.get("discountType");
   const discountValue = formData.get("discountValue");
   const buyProducts = JSON.parse(formData.get("buyProducts") || "[]");
+  const getProducts = JSON.parse(formData.get("getProducts") || "[]");
 
   console.log("Saving discount:", { title, message, buyQty, getQty, discountType, discountValue });
 
-  const response = await admin.graphql(`
-    query {
-      shop {
-        id
-        metafield(namespace: "discount_engine", key: "all_discounts") {
-          value
-        }
-      }
-    }
-  `);
+  const response = await admin.graphql(SHOP_QUERY);
 
   const result = await response.json();
   const shopId = result.data.shop.id;
@@ -65,25 +64,13 @@ export const action = async ({ request }) => {
     getQty,
     discountType,
     discountValue,
-    products: buyProducts.map(p => p.id),
+    buyProducts,
+    getProducts,
     createdAt: new Date().toISOString()
   };
 
   // 1. Get the Function ID
-  const functionQuery = await admin.graphql(`
-    query {
-      shopifyFunctions(first: 25) {
-        nodes {
-          id
-          title
-          apiType
-          app {
-            title
-          }
-        }
-      }
-    }
-  `);
+  const functionQuery = await admin.graphql(FUNCTIONS_QUERY);
   const functionData = await functionQuery.json();
   const nodes = functionData.data?.shopifyFunctions?.nodes || [];
   console.log("All Available Functions:", JSON.stringify(nodes));
@@ -104,29 +91,9 @@ export const action = async ({ request }) => {
 
   // 2. Create the Native Shopify Discount (Automatic)
   if (functionId) {
-    const discResp = await admin.graphql(`
-      mutation {
-        discountAutomaticAppCreate(automaticAppDiscount: {
-          title: "${finalTitle}",
-          functionId: "${functionId}",
-          startsAt: "${new Date().toISOString()}",
-          discountClasses: [PRODUCT],
-          combinesWith: {
-            orderDiscounts: false,
-            productDiscounts: false,
-            shippingDiscounts: false
-          }
-        }) {
-          automaticAppDiscount {
-            discountId
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }
-    `);
+    const discResp = await admin.graphql(
+      CREATE_AUTOMATIC_DISCOUNT_MUTATION(finalTitle, functionId, new Date().toISOString())
+    );
 
     const discResult = await discResp.json();
     console.log("Native Discount Creation Result:", JSON.stringify(discResult));
@@ -146,42 +113,24 @@ export const action = async ({ request }) => {
   // 4. Save to SHOP Metafield ONLY if Shopify creation succeeded
   if (nativeErrors.length === 0) {
     // Ensure the SHOP Metafield Definition exists
-    await admin.graphql(`
-      mutation {
-        metafieldDefinitionCreate(definition: {
-          name: "All Discounts"
-          namespace: "discount_engine"
-          key: "all_discounts"
-          type: "json"
-          ownerType: SHOP
-          access: {
-            storefront: PUBLIC_READ
-          }
-        }) {
-          userErrors { message }
-        }
-      }
-    `);
+    await admin.graphql(METAFIELD_DEFINITION_CREATE_MUTATION);
 
     const updatedDiscounts = [...currentDiscounts, newDiscount];
 
-    const setResp = await admin.graphql(`
-      mutation {
-        metafieldsSet(metafields: [
+    const setResp = await admin.graphql(METAFIELDS_SET_MUTATION, {
+      variables: {
+        metafields: [
           {
-            ownerId: "${shopId}",
+            ownerId: shopId,
             namespace: "discount_engine",
             key: "all_discounts",
             type: "json",
-            value: ${JSON.stringify(JSON.stringify(updatedDiscounts))}
-          }
-        ]) {
-          userErrors { message }
-        }
-      }
-    `);
+            value: JSON.stringify(updatedDiscounts),
+          },
+        ],
+      },
+    });
     const setResult = await setResp.json();
-    console.log("Metafield Set Result:", JSON.stringify(setResult));
 
     return redirect("/app");
   }
