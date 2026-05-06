@@ -71,12 +71,11 @@ export function cartLinesDiscountsGenerateRun(input) {
       let eligibleRewardQty = 0;
       if (areSameProducts) {
         const setSize = buyQty + getQty;
-        eligibleRewardQty = Math.floor(totalBuyQty / setSize) * getQty;
+        // Cap at getQty to ensure it only applies once
+        eligibleRewardQty = totalBuyQty >= setSize ? getQty : 0;
       } else {
-        eligibleRewardQty = Math.min(
-          Math.floor(totalBuyQty / buyQty) * getQty,
-          totalGetQty
-        );
+        // Cap at getQty to ensure it only applies once
+        eligibleRewardQty = totalBuyQty >= buyQty ? Math.min(getQty, totalGetQty) : 0;
       }
 
       console.error(`Eligible Reward Qty: ${eligibleRewardQty}`);

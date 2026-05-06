@@ -2,15 +2,22 @@
   console.log("Discount Engine: Logic Loaded");
 
   const discounts = window.discountEngine?.discounts || [];
+  console.log("Discounts: ", discounts);
   if (!discounts.length) return;
+
+  let isEvaluating = false;
 
   // Reusable function to evaluate and mutate the cart
   async function evaluateBogoState() {
+    if (isEvaluating) return;
+    isEvaluating = true;
+
     try {
       console.log("Discount Engine: Evaluating cart state...");
       const cartResp = await fetch('/cart.js');
       const cart = await cartResp.json();
 
+      console.log("Cart: ", cart)
       let mutationOccurred = false;
 
       for (const discount of discounts) {
@@ -42,14 +49,14 @@
           // For every (Buy + Get) items, Get items should be free.
           // If we have 1 item (Buy 1 Get 1), we need 1 more to make a set of 2.
           const setSize = buyQtyRequirement + getQtyReward;
-          const remainder = totalItems % setSize;
-
-          if (remainder >= buyQtyRequirement && remainder < setSize) {
+          
+          // Only complete the set once. If they already have a full set or more, don't add.
+          if (totalItems >= buyQtyRequirement && totalItems < setSize) {
             // We have enough to trigger a reward, but haven't added the reward item yet
-            const neededToCompleteSet = setSize - remainder;
+            const neededToCompleteSet = setSize - totalItems;
             console.log(`Discount Engine: Completing BOGO set. Adding ${neededToCompleteSet} more of the same product.`);
 
-            await fetch('/cart/add.js', {
+            await originalFetch('/cart/add.js', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -66,13 +73,14 @@
           }, 0);
 
           if (totalBuyQty >= buyQtyRequirement) {
-            const targetRewardQty = Math.floor(totalBuyQty / buyQtyRequirement) * getQtyReward;
+            // Apply only once: target quantity is just the reward quantity
+            const targetRewardQty = getQtyReward;
             const existingReward = cart.items.find(item => item.variant_id.toString() === rewardVariantId.toString());
             const currentRewardQty = existingReward ? existingReward.quantity : 0;
 
             if (currentRewardQty < targetRewardQty) {
               console.log(`Discount Engine: Adding ${targetRewardQty - currentRewardQty} reward items (different product)`);
-              await fetch('/cart/add.js', {
+              await originalFetch('/cart/add.js', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -90,6 +98,8 @@
       }
     } catch (e) {
       console.error("Discount Engine: Error in evaluation", e);
+    } finally {
+      isEvaluating = false;
     }
   }
 
@@ -138,12 +148,45 @@
 
         if (variantToAdd) {
           try {
-            await originalFetch('/cart/add.js', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ items: [{ id: variantToAdd, quantity: getQty }] })
-            });
-            await new Promise(resolve => setTimeout(resolve, 500));
+            // Check if item is already in cart to avoid double addition
+            const cartResp = await originalFetch('/cart.js');
+            const cart = await cartResp.json();
+            
+            const buyQty = parseInt(matchingDiscount.buyQty) || 1;
+            const getQty = parseInt(matchingDiscount.getQty) || 1;
+            const buyProductIds = (matchingDiscount.buyProducts || matchingDiscount.products || []).map(p => typeof p === 'string' ? p : p.id);
+            const isSameProduct = buyProductIds.includes(firstRewardProduct.id);
+
+            let neededQty = 0;
+            if (isSameProduct) {
+              const totalItems = cart.items.reduce((sum, item) => {
+                const gid = `gid://shopify/Product/${item.product_id}`;
+                return buyProductIds.includes(gid) ? sum + item.quantity : sum;
+              }, 0);
+              
+              const setSize = buyQty + getQty;
+              const remainder = totalItems % setSize;
+              if (remainder >= buyQty && remainder < setSize) {
+                neededQty = setSize - remainder;
+              }
+            } else {
+              const existingItem = cart.items.find(item => item.variant_id.toString() === variantToAdd.toString());
+              const currentRewardQty = existingItem ? existingItem.quantity : 0;
+              const targetRewardQty = getQty; // For code apply, we just ensure at least one set is there
+
+              if (currentRewardQty < targetRewardQty) {
+                neededQty = targetRewardQty - currentRewardQty;
+              }
+            }
+
+            if (neededQty > 0) {
+              await originalFetch('/cart/add.js', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: [{ id: variantToAdd, quantity: neededQty }] })
+              });
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
           } catch (e) {
             console.error("Discount Engine: Error adding reward product", e);
           }
