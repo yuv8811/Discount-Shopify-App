@@ -8,6 +8,7 @@ import {
   SHOP_QUERY,
   METAFIELDS_SET_MUTATION,
   DELETE_AUTOMATIC_DISCOUNT_MUTATION,
+  DELETE_CODE_DISCOUNT_MUTATION,
   UPDATE_AUTOMATIC_DISCOUNT_MUTATION,
   ACTIVATE_DISCOUNT_MUTATION,
   DEACTIVATE_DISCOUNT_MUTATION,
@@ -46,20 +47,23 @@ export const action = async ({ request }) => {
   try {
     const rawValue = result.data.shop.metafield?.value;
     if (rawValue) currentDiscounts = JSON.parse(rawValue);
-  } catch (e) {}
+  } catch (e) { }
 
   let updatedDiscounts = [...currentDiscounts];
 
   if (intent === "delete") {
     const idsToDelete = formData.getAll("id");
-    
+
     // Process each ID
     for (const idToDelete of idsToDelete) {
       const discount = currentDiscounts.find((d) => d.id === idToDelete);
       if (discount?.shopifyId) {
-        await admin.graphql(
-          DELETE_AUTOMATIC_DISCOUNT_MUTATION(discount.shopifyId)
-        );
+        const isCodeDiscount = discount.shopifyId.includes("DiscountCodeNode");
+        const mutation = isCodeDiscount
+          ? DELETE_CODE_DISCOUNT_MUTATION(discount.shopifyId)
+          : DELETE_AUTOMATIC_DISCOUNT_MUTATION(discount.shopifyId);
+
+        await admin.graphql(mutation);
       }
     }
 
@@ -278,6 +282,7 @@ export default function Index() {
                 <s-table-header>Title</s-table-header>
                 <s-table-header>Discount Type</s-table-header>
                 <s-table-header>Status</s-table-header>
+                <s-table-header>Code</s-table-header>
                 <s-table-header>Actions</s-table-header>
               </s-table-header-row>
               <s-table-body>
@@ -303,6 +308,7 @@ export default function Index() {
                           {status}
                         </s-badge>
                       </s-table-cell>
+                      <s-table-cell>{discount.code || "N/A"}</s-table-cell>
                       <s-table-cell>
                         <s-stack direction="inline" gap="extraTight">
                           <EditModal discount={discount} />

@@ -27,5 +27,6 @@ query CartInput {
       value
     }
   }
+  triggeringDiscountCode
 }
 

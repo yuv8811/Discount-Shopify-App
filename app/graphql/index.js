@@ -48,6 +48,31 @@ export const CREATE_AUTOMATIC_DISCOUNT_MUTATION = (title, functionId, startsAt) 
   }
 `;
 
+export const CREATE_CODE_DISCOUNT_MUTATION = (title, functionId, startsAt, code) => `#graphql
+  mutation {
+    discountCodeAppCreate(codeAppDiscount: {
+      title: "${title}",
+      functionId: "${functionId}",
+      startsAt: "${startsAt}",
+      code: "${code}",
+      discountClasses: [PRODUCT],
+      combinesWith: {
+        orderDiscounts: false,
+        productDiscounts: false,
+        shippingDiscounts: false
+      }
+    }) {
+      codeAppDiscount {
+        discountId
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 export const METAFIELD_DEFINITION_CREATE_MUTATION = `#graphql
   mutation {
     metafieldDefinitionCreate(definition: {
@@ -80,6 +105,18 @@ export const DELETE_AUTOMATIC_DISCOUNT_MUTATION = (id) => `#graphql
   mutation {
     discountAutomaticDelete(id: "${id}") {
       deletedAutomaticDiscountId
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const DELETE_CODE_DISCOUNT_MUTATION = (id) => `#graphql
+  mutation {
+    discountCodeDelete(id: "${id}") {
+      deletedCodeDiscountId
       userErrors {
         field
         message

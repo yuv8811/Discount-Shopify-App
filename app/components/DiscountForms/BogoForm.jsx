@@ -13,6 +13,8 @@ import {
     Box,
     Divider,
     PageActions,
+    Tabs,
+    InlineStack,
 } from "@shopify/polaris";
 import ProductPicker from "../ProductPicker";
 
@@ -30,6 +32,31 @@ export default function BogoForm() {
     const [getQty, setGetQty] = useState("1");
     const [discountType, setDiscountType] = useState("free"); // Default to free since user removed the selector
     const [discountValue, setDiscountValue] = useState("");
+    const [selectedTab, setSelectedTab] = useState(0);
+    const [discountCode, setDiscountCode] = useState("");
+
+    const tabs = [
+        {
+            id: 'automatic',
+            content: 'Automatic',
+            panelID: 'automatic-content',
+        },
+        {
+            id: 'code',
+            content: 'Code',
+            panelID: 'code-content',
+        },
+    ];
+
+    const handleTabChange = useCallback(
+        (selectedTabIndex) => setSelectedTab(selectedTabIndex),
+        [],
+    );
+
+    const generateCode = useCallback(() => {
+        const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+        setDiscountCode(code);
+    }, []);
 
     const today = new Date().toISOString().split("T")[0];
     const now = new Date();
@@ -58,9 +85,11 @@ export default function BogoForm() {
         formData.append("endTime", endTime);
         formData.append("buyProducts", JSON.stringify(buyProducts));
         formData.append("getProducts", JSON.stringify(getProducts));
+        formData.append("method", selectedTab === 0 ? "automatic" : "code");
+        formData.append("code", discountCode);
 
         submit(formData, { method: "POST" });
-    }, [submit, title, message, buyQty, getQty, discountType, discountValue, startDate, startTime, endDate, endTime, buyProducts, getProducts]);
+    }, [submit, title, message, buyQty, getQty, discountType, discountValue, startDate, startTime, endDate, endTime, buyProducts, getProducts, selectedTab, discountCode]);
 
     const summaryBanner = (
         <Banner tone="info" hideIcon>
@@ -107,6 +136,41 @@ export default function BogoForm() {
                                     autoComplete="off"
                                     placeholder="Buy 2 get 1 free"
                                 />
+
+                                <Box paddingBlockStart="200">
+                                    <BlockStack gap="200">
+                                        <Text variant="bodySm" tone="subdued">
+                                            Method
+                                        </Text>
+                                        <Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange} fitted>
+                                            <Box padding="400">
+                                                {selectedTab === 0 ? (
+                                                    <Text variant="bodyMd" as="p">
+                                                        Customers will get this discount automatically in their cart and at checkout.
+                                                    </Text>
+                                                ) : (
+                                                    <BlockStack gap="300">
+                                                        <InlineStack align="space-between" blockAlign="end">
+                                                            <div style={{ flexGrow: 1 }}>
+                                                                <TextField
+                                                                    label="Discount code"
+                                                                    value={discountCode}
+                                                                    onChange={setDiscountCode}
+                                                                    autoComplete="off"
+                                                                    placeholder="SUMMER2024"
+                                                                />
+                                                            </div>
+                                                            <Button onClick={generateCode}>Generate</Button>
+                                                        </InlineStack>
+                                                        <Text variant="bodySm" tone="subdued">
+                                                            Customers must enter this code at checkout.
+                                                        </Text>
+                                                    </BlockStack>
+                                                )}
+                                            </Box>
+                                        </Tabs>
+                                    </BlockStack>
+                                </Box>
                             </BlockStack>
                         </Card>
 

@@ -6,6 +6,7 @@ import {
   SHOP_QUERY,
   FUNCTIONS_QUERY,
   CREATE_AUTOMATIC_DISCOUNT_MUTATION,
+  CREATE_CODE_DISCOUNT_MUTATION,
   METAFIELD_DEFINITION_CREATE_MUTATION,
   METAFIELDS_SET_MUTATION
 } from "../graphql";
@@ -27,10 +28,12 @@ export const action = async ({ request }) => {
   const getQty = formData.get("getQty");
   const discountType = formData.get("discountType");
   const discountValue = formData.get("discountValue");
+  const method = formData.get("method") || "automatic";
+  const code = formData.get("code") || "";
   const buyProducts = JSON.parse(formData.get("buyProducts") || "[]");
   const getProducts = JSON.parse(formData.get("getProducts") || "[]");
 
-  console.log("Saving discount:", { title, message, buyQty, getQty, discountType, discountValue });
+  console.log("Saving discount:", { title, message, buyQty, getQty, discountType, discountValue, method, code });
 
   const response = await admin.graphql(SHOP_QUERY);
 
@@ -64,8 +67,11 @@ export const action = async ({ request }) => {
     getQty,
     discountType,
     discountValue,
+    method,
+    code,
     buyProducts,
     getProducts,
+    status: "active",
     createdAt: new Date().toISOString()
   };
 
@@ -89,20 +95,28 @@ export const action = async ({ request }) => {
 
   let nativeErrors = [];
 
-  // 2. Create the Native Shopify Discount (Automatic)
+  // 2. Create the Native Shopify Discount
   if (functionId) {
-    const discResp = await admin.graphql(
-      CREATE_AUTOMATIC_DISCOUNT_MUTATION(finalTitle, functionId, new Date().toISOString())
-    );
+    const mutation = method === "code" 
+      ? CREATE_CODE_DISCOUNT_MUTATION(finalTitle, functionId, new Date().toISOString(), code)
+      : CREATE_AUTOMATIC_DISCOUNT_MUTATION(finalTitle, functionId, new Date().toISOString());
+
+    const discResp = await admin.graphql(mutation);
 
     const discResult = await discResp.json();
     console.log("Native Discount Creation Result:", JSON.stringify(discResult));
 
-    if (discResult.data?.discountAutomaticAppCreate?.userErrors?.length > 0) {
-      nativeErrors = discResult.data.discountAutomaticAppCreate.userErrors;
+    const resultData = method === "code" 
+      ? discResult.data?.discountCodeAppCreate 
+      : discResult.data?.discountAutomaticAppCreate;
+
+    if (resultData?.userErrors?.length > 0) {
+      nativeErrors = resultData.userErrors;
       console.error("Shopify User Errors:", nativeErrors);
     } else {
-      newDiscount.shopifyId = discResult.data?.discountAutomaticAppCreate?.automaticAppDiscount?.discountId;
+      newDiscount.shopifyId = method === "code"
+        ? resultData?.codeAppDiscount?.discountId
+        : resultData?.automaticAppDiscount?.discountId;
     }
   } else {
     nativeErrors = [{ message: "No Shopify Function found. Make sure you have deployed your extension.", field: ["functionId"] }];

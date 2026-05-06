@@ -1,73 +1,156 @@
-
-(function() {
+(function () {
   console.log("Discount Engine: Logic Loaded");
 
   const discounts = window.discountEngine?.discounts || [];
   if (!discounts.length) return;
 
-  // Intercept cart additions
-  const originalFetch = window.fetch;
-  window.fetch = async function() {
-    const response = await originalFetch.apply(this, arguments);
-    const url = arguments[0];
+  // Reusable function to evaluate and mutate the cart
+  async function evaluateBogoState() {
+    try {
+      console.log("Discount Engine: Evaluating cart state...");
+      const cartResp = await fetch('/cart.js');
+      const cart = await cartResp.json();
 
-    // Check if we are adding to cart
-    if (typeof url === 'string' && (url.includes('/cart/add.js') || url.includes('/cart/add'))) {
-      const clone = response.clone();
-      try {
-        const data = await clone.json();
-        const items = data.items || [data];
-        
-        for (const item of items) {
-          const productId = `gid://shopify/Product/${item.product_id}`;
-          
-          // Find if this product triggers a discount (checking both new and old field names)
-          const activeDiscount = discounts.find(d => {
-            if (d.status !== 'active') return false;
-            const buyProductIds = (d.buyProducts || d.products || []).map(p => typeof p === 'string' ? p : p.id);
-            return buyProductIds.includes(productId);
-          });
-          
-          if (activeDiscount) {
-            console.log("Discount Engine: Trigger found for", activeDiscount.title);
-            
-            const getProducts = activeDiscount.getProducts || [];
-            let variantToAdd = item.id; // Default to same product
-            
-            if (getProducts.length > 0) {
-              const firstRewardProduct = getProducts[0];
-              if (firstRewardProduct.variants && firstRewardProduct.variants.length > 0) {
-                // Extract numerical ID from GID if necessary
-                const variantGid = firstRewardProduct.variants[0].id;
-                variantToAdd = variantGid.split('/').pop();
-              }
-            }
+      let mutationOccurred = false;
 
-            const buyQty = parseInt(activeDiscount.buyQty) || 1;
-            const getQty = parseInt(activeDiscount.getQty) || 1;
+      for (const discount of discounts) {
+        if (discount.status === 'inactive') continue;
 
-            // Simple check: If we're adding the trigger product, add the reward
-            console.log("Discount Engine: Auto-adding reward items...");
-            await originalFetch('/cart/add.js', {
+        const buyProductIds = (discount.buyProducts || discount.products || []).map(p => typeof p === 'string' ? p : p.id);
+        const getProducts = discount.getProducts || [];
+        if (getProducts.length === 0) continue;
+
+        const buyQtyRequirement = parseInt(discount.buyQty) || 1;
+        const getQtyReward = parseInt(discount.getQty) || 1;
+
+        // Check if Buy and Get products are the same
+        const firstRewardProduct = getProducts[0];
+        const rewardVariantGid = firstRewardProduct.variants?.[0]?.id;
+        if (!rewardVariantGid) continue;
+        const rewardVariantId = rewardVariantGid.split('/').pop();
+        const rewardProductGid = firstRewardProduct.id;
+
+        const isSameProduct = buyProductIds.includes(rewardProductGid);
+
+        if (isSameProduct) {
+          // "Buy X Get X Free" logic
+          const totalItems = cart.items.reduce((sum, item) => {
+            const gid = `gid://shopify/Product/${item.product_id}`;
+            return buyProductIds.includes(gid) ? sum + item.quantity : sum;
+          }, 0);
+
+          // For every (Buy + Get) items, Get items should be free.
+          // If we have 1 item (Buy 1 Get 1), we need 1 more to make a set of 2.
+          const setSize = buyQtyRequirement + getQtyReward;
+          const remainder = totalItems % setSize;
+
+          if (remainder >= buyQtyRequirement && remainder < setSize) {
+            // We have enough to trigger a reward, but haven't added the reward item yet
+            const neededToCompleteSet = setSize - remainder;
+            console.log(`Discount Engine: Completing BOGO set. Adding ${neededToCompleteSet} more of the same product.`);
+
+            await fetch('/cart/add.js', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                items: [{
-                  id: variantToAdd,
-                  quantity: getQty
-                }]
+                items: [{ id: rewardVariantId, quantity: neededToCompleteSet }]
               })
             });
-            
-            // Refresh cart to show changes
-            window.location.reload();
+            mutationOccurred = true;
+          }
+        } else {
+          // "Buy A Get B Free" logic
+          const totalBuyQty = cart.items.reduce((sum, item) => {
+            const gid = `gid://shopify/Product/${item.product_id}`;
+            return buyProductIds.includes(gid) ? sum + item.quantity : sum;
+          }, 0);
+
+          if (totalBuyQty >= buyQtyRequirement) {
+            const targetRewardQty = Math.floor(totalBuyQty / buyQtyRequirement) * getQtyReward;
+            const existingReward = cart.items.find(item => item.variant_id.toString() === rewardVariantId.toString());
+            const currentRewardQty = existingReward ? existingReward.quantity : 0;
+
+            if (currentRewardQty < targetRewardQty) {
+              console.log(`Discount Engine: Adding ${targetRewardQty - currentRewardQty} reward items (different product)`);
+              await fetch('/cart/add.js', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  items: [{ id: rewardVariantId, quantity: targetRewardQty - currentRewardQty }]
+                })
+              });
+              mutationOccurred = true;
+            }
           }
         }
-      } catch (e) {
-        console.error("Discount Engine: Error processing cart addition", e);
       }
+
+      if (mutationOccurred) {
+        window.location.reload();
+      }
+    } catch (e) {
+      console.error("Discount Engine: Error in evaluation", e);
+    }
+  }
+
+  // Run on page load
+  evaluateBogoState();
+
+  // Intercept cart additions/updates
+  const originalFetch = window.fetch;
+  window.fetch = async function () {
+    const response = await originalFetch.apply(this, arguments);
+    const url = arguments[0];
+
+    const isCartMutation = typeof url === 'string' && (
+      url.includes('/cart/add') ||
+      url.includes('/cart/update') ||
+      url.includes('/cart/change') ||
+      url.includes('/cart/clear')
+    );
+
+    if (isCartMutation) {
+      // Small delay to let Shopify process the mutation
+      setTimeout(evaluateBogoState, 500);
     }
 
     return response;
+  };
+
+  // Global function for code-based application
+  window.applyDiscountCode = async function (code) {
+    if (!code) return;
+
+    const matchingDiscount = discounts.find(d =>
+      d.status !== 'inactive' &&
+      d.method === 'code' &&
+      d.code?.toLowerCase() === code.toLowerCase()
+    );
+
+    if (matchingDiscount) {
+      const getProducts = matchingDiscount.getProducts || [];
+      const getQty = parseInt(matchingDiscount.getQty) || 1;
+
+      if (getProducts.length > 0) {
+        const firstRewardProduct = getProducts[0];
+        const rewardVariantGid = firstRewardProduct.variants?.[0]?.id;
+        const variantToAdd = rewardVariantGid ? rewardVariantGid.split('/').pop() : null;
+
+        if (variantToAdd) {
+          try {
+            await originalFetch('/cart/add.js', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ items: [{ id: variantToAdd, quantity: getQty }] })
+            });
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } catch (e) {
+            console.error("Discount Engine: Error adding reward product", e);
+          }
+        }
+      }
+    }
+
+    window.location.href = "/discount/" + encodeURIComponent(code) + "?redirect=/cart";
   };
 })();

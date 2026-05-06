@@ -1,0 +1,27 @@
+<div class="discount-widget-container">
+  {% render 'apply_discount' %}
+</div>
+
+<script>
+  window.discountEngine = {
+    discounts: {{ shop.metafields.discount_engine.all_discounts.value | json | default: '[]' }}
+  };
+  console.log("Discount Engine: Initialized");
+</script>
+
+<script src="{{ 'discount-logic.js' | asset_url }}" defer="defer"></script>
+
+{% schema %}
+{
+  "name": "Discount Widget",
+  "target": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Heading",
+      "default": "Apply Discount"
+    }
+  ]
+}
+{% endschema %}
