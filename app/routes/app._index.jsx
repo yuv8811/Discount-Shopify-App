@@ -174,60 +174,23 @@ export default function Index() {
 
 
   return (
-    <s-page
-      heading="Discounts"
-      fullWidth
-    >
+    <s-page heading="Discounts">
       <Modal slot="primary-action" />
       <s-section>
-        <div style={{ display: 'flex', gap: '16px', width: '100%', alignItems: 'stretch' }}>
-          <s-box
-            padding="base"
-            borderWidth="base"
-            borderRadius="base"
-            background="surface"
-            style={{ flex: 1 }}
-          >
-            <s-stack gap="tight">
-              <s-text variant="bodySm" tone="subdued">
-                Total Discounts
-              </s-text>
-              <s-text variant="headingLg">{discounts.length}</s-text>
-            </s-stack>
-          </s-box>
-          <s-box
-            padding="base"
-            borderWidth="base"
-            borderRadius="base"
-            background="surface"
-            style={{ flex: 1 }}
-          >
-            <s-stack gap="tight">
-              <s-text variant="bodySm" tone="subdued">
-                Inactive Discounts
-              </s-text>
-              <s-text variant="headingLg">
-                {discounts.filter(d => d.status === 'inactive').length}
-              </s-text>
-            </s-stack>
-          </s-box>
-          <s-box
-            padding="base"
-            borderWidth="base"
-            borderRadius="base"
-            background="surface"
-            style={{ flex: 1 }}
-          >
-            <s-stack gap="tight">
-              <s-text variant="bodySm" tone="subdued">
-                Active Discounts
-              </s-text>
-              <s-text variant="headingLg">
-                {discounts.filter(d => d.status !== 'inactive' && d.status !== 'draft').length || (discounts.length > 0 ? discounts.length : 0)}
-              </s-text>
-            </s-stack>
-          </s-box>
-        </div>
+        <s-grid gridTemplateColumns="repeat(12, 1fr)">
+          <s-grid-item gridColumn="span 4">
+            <s-heading>Total Discounts</s-heading>
+            <s-text>{discounts.length}</s-text>
+          </s-grid-item>
+          <s-grid-item gridColumn="span 4">
+            <s-heading>Active Discounts</s-heading>
+            <s-text>{discounts.filter((d) => d.status === "active").length}</s-text>
+          </s-grid-item>
+          <s-grid-item gridColumn="span 4">
+            <s-heading>Inactive Discounts</s-heading>
+            <s-text>{discounts.filter((d) => d.status === "inactive").length}</s-text>
+          </s-grid-item>
+        </s-grid>
       </s-section>
       <s-section>
         {discounts.length === 0 ? (
